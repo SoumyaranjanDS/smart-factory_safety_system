@@ -1,0 +1,55 @@
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# Model weights (share via Google Drive instead)
+ai-engine/models/*.pt
+ai-engine/models/runs/
+
+# Datasets (too large for Git)
+ai-engine/data/
+D-Fire/
+Indoor Fire Smoke/
+factory-1/
+factory-2/
+database/
+fire-smoke-out/
+
+# Evidence frames and local videos
+evidence/
+*.mp4
+*.avi
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# Ultralytics cache
+*.cache
+runs/
+
+# OS artifacts
+.DS_Store
+__MACOSX/
+Thumbs.db
+desktop.ini
+
+# Node
+node_modules/
+dist/
+build/
+.next/
+
+# Environment files
+.env
+.env.local
+
+# Logs
+*.log
+logs/
+
+# Redis dump
+dump.rdb
