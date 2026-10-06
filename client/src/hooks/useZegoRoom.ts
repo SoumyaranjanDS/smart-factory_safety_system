@@ -133,7 +133,7 @@ export function useZegoRoom(appID: number, serverURL: string, roomID: string, to
                 console.error("Publish error", err);
             }
         }
-    }, [isPublishing]);
+    }, [isPublishing, roomStatus]);
 
     return {
         roomStatus,
