@@ -1,6 +1,7 @@
-ultralytics==8.4.156
-torch==2.6.0
-torchvision
+fastapi
+uvicorn
+websockets
+ultralytics
 opencv-python
-pyyaml
-psutil
+numpy
+httpx
