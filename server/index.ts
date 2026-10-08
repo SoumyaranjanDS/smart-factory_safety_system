@@ -25,7 +25,11 @@ app.get("/api/zego-token", (req, res) => {
     }
 
     const appId = Number(process.env.VITE_ZEGO_APP_ID);
-    const secret = process.env.VITE_ZEGO_SERVER_SECRET || "";
+    const secret = process.env.VITE_ZEGO_SERVER_SECRET;
+    
+    if (!appId || !secret) {
+        return res.status(500).json({ error: "Server missing Zego credentials in .env (VITE_ZEGO_APP_ID or VITE_ZEGO_SERVER_SECRET)" });
+    }
     
     try {
         const payload = JSON.stringify({

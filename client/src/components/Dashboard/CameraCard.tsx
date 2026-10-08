@@ -60,41 +60,39 @@ export default function CameraCard({ title, location, cameraId, status, stream, 
         const ws = new WebSocket(`ws://localhost:8000/ws/stream/${cameraId}`);
         wsRef.current = ws;
 
-        let interval: NodeJS.Timeout;
+        let isSending = false;
+        
+        const sendFrame = () => {
+            if (!videoRef.current || ws.readyState !== WebSocket.OPEN) return;
+            const video = videoRef.current;
+            if (video.videoWidth === 0) return;
+
+            const canvas = document.createElement("canvas");
+            const ctx = canvas.getContext("2d");
+            if (!ctx) return;
+
+            let cw = video.videoWidth;
+            let ch = video.videoHeight;
+            if (rotation % 180 !== 0) {
+                cw = video.videoHeight;
+                ch = video.videoWidth;
+            }
+            canvas.width = cw;
+            canvas.height = ch;
+            setVideoDims({ w: cw, h: ch });
+
+            ctx.translate(canvas.width / 2, canvas.height / 2);
+            ctx.rotate((rotation * Math.PI) / 180);
+            ctx.drawImage(video, -video.videoWidth / 2, -video.videoHeight / 2);
+
+            // High quality JPEG so AI can actually see small details
+            const frameData = canvas.toDataURL("image/jpeg", 0.7);
+            ws.send(frameData);
+        };
 
         ws.onopen = () => {
             console.log(`Connected to AI Engine for ${cameraId}`);
-            
-            // Start capturing at 3 FPS
-            interval = setInterval(() => {
-                const video = videoRef.current;
-                if (!video || ws.readyState !== WebSocket.OPEN || video.videoWidth === 0) return;
-
-                const canvas = document.createElement("canvas");
-                const ctx = canvas.getContext("2d");
-                if (!ctx) return;
-
-                // Apply the manual rotation to the AI frame so it analyzes an upright image
-                let cw, ch;
-                if (rotation % 180 !== 0) {
-                    cw = video.videoHeight;
-                    ch = video.videoWidth;
-                } else {
-                    cw = video.videoWidth;
-                    ch = video.videoHeight;
-                }
-                canvas.width = cw;
-                canvas.height = ch;
-                setVideoDims({ w: cw, h: ch });
-
-                ctx.translate(canvas.width / 2, canvas.height / 2);
-                ctx.rotate((rotation * Math.PI) / 180);
-                ctx.drawImage(video, -video.videoWidth / 2, -video.videoHeight / 2);
-
-                // Compress heavily to save bandwidth
-                const frameData = canvas.toDataURL("image/webp", 0.5);
-                ws.send(frameData);
-            }, 333); // ~3 FPS
+            sendFrame(); // Kick off the first frame
         };
 
         ws.onmessage = (event) => {
@@ -106,12 +104,19 @@ export default function CameraCard({ title, location, cameraId, status, stream, 
             } catch (err) {
                 console.error("Failed to parse WS message:", err);
             }
+            
+            // Wait a tiny fraction of a second, then request the next frame.
+            // This guarantees ZERO queue buffering and PERFECT real-time sync!
+            setTimeout(() => {
+                if (ws.readyState === WebSocket.OPEN) {
+                    sendFrame();
+                }
+            }, 30); 
         };
 
         ws.onerror = (e) => console.error(`AI Engine WS Error [${cameraId}]:`, e);
 
         return () => {
-            clearInterval(interval);
             if (ws.readyState === WebSocket.OPEN) ws.close();
         };
     }, [status, stream, cameraId, rotation]);

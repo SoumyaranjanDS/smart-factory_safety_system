@@ -26,13 +26,13 @@ app.add_middleware(
 )
 
 # --- Configuration ---
-PERSON_MODEL_PATH = "yolov8n.pt"  # Lightweight model just for person detection
-PPE_MODEL_PATH = "models/ppe_detection_model.pt"  
-FIRE_MODEL_PATH = "models/fire_model.pt"
+PERSON_MODEL_PATH = "models/person/yolo26n_v2.pt"  # Upgraded custom Gatekeeper model
+PPE_MODEL_PATH = "models/ppe/ppe_v3.pt"            # Latest PPE Version
+FIRE_MODEL_PATH = "models/fire_smoke/fire_indoor_v2.pt" # The REAL trained Fire/Smoke model
 
 NODE_API_URL = "http://localhost:4000/api/alerts"
-BATCH_SIZE = 4
-MAX_QUEUE_SIZE = 8
+BATCH_SIZE = 1
+MAX_QUEUE_SIZE = 1
 
 # --- Load Models ---
 logger.info("Loading YOLO models (Person, PPE, Fire)...")
@@ -72,7 +72,8 @@ def process_batch(batch):
             return
 
         orig_frames = [item["frame"] for item in batch]
-        frames = [cv2.resize(f, (640, 640)) for f in orig_frames]
+        # DO NOT squish the aspect ratio! YOLO automatically letterboxes to preserve proportions.
+        frames = orig_frames
         camera_ids = [item["camera_id"] for item in batch]
         
         # 1. Run Person Detection First (Class 0 is 'person' in COCO)
@@ -86,72 +87,121 @@ def process_batch(batch):
                 has_person = True
             frames_with_people.append(has_person)
 
-        # 2. Run PPE Model ONLY on frames that have people!
-        ppe_results = []
+        # 2. Run PPE Model ONLY on cropped regions of people!
+        all_ppe_results = [None] * len(frames)
+        all_person_crops = [None] * len(frames) # list of lists of (cx1, cy1)
+        
         for i, frame in enumerate(frames):
             if frames_with_people[i] and ppe_model:
-                res = ppe_model(frame, verbose=False)[0]
-                ppe_results.append(res)
-            else:
-                ppe_results.append(None)
+                frame_crops = []
+                frame_offsets = []
+                for box in person_results[i].boxes:
+                    if float(box.conf[0]) < 0.45: continue # Match the drawing threshold!
+                    
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    
+                    # Add a safe margin around the person so helmets/shoes aren't cut off
+                    margin = 30
+                    h, w = frame.shape[:2]
+                    cx1 = max(0, x1 - margin)
+                    cy1 = max(0, y1 - margin)
+                    cx2 = min(w, x2 + margin)
+                    cy2 = min(h, y2 + margin)
+                    
+                    crop = frame[cy1:cy2, cx1:cx2]
+                    if crop.size > 0:
+                        frame_crops.append(crop)
+                        frame_offsets.append((cx1, cy1))
+                
+                all_person_crops[i] = frame_offsets
+                
+                # Run PPE on all cropped people simultaneously!
+                if frame_crops:
+                    all_ppe_results[i] = ppe_model(frame_crops, verbose=False)
         
         # 3. Run Fire/Smoke Model on ALL frames
         fire_results = fire_model(frames, verbose=False) if fire_model else [None] * len(frames)
 
         for i in range(len(frames)):
             cam_id = camera_ids[i]
+            frame_h, frame_w = frames[i].shape[:2]
             alerts = []
             json_boxes = []
             
+            # --- Define Premium Color Palette ---
+            CLASS_COLORS = {
+                "Worker": "#ffffff",         # White
+                "helmet": "#eab308",         # Yellow (Classic hardhat)
+                "vest": "#3b82f6",           # Blue
+                "boots": "#8b5cf6",          # Purple
+                "gloves": "#14b8a6",         # Teal
+                "glasses": "#ec4899",        # Pink
+                "fire": "#f97316",           # Orange
+                "smoke": "#94a3b8",          # Slate Gray
+                "flame": "#f97316",          # Orange
+            }
+            # All violations will default to Red (#ef4444)
+            # Anything else defaults to Green (#22c55e)
+
             # --- Process Person Boxes ---
             if person_results[i]:
                 for box in person_results[i].boxes:
                     conf = float(box.conf[0])
-                    if conf < 0.35: continue
+                    if conf < 0.45: continue  # Restored to 0.45 to prevent hallucinating people on background objects!
                     
                     x1, y1, x2, y2 = map(float, box.xyxy[0])
-                    # Convert to percentages relative to the 640x640 frame
-                    px, py = (x1 / 640) * 100, (y1 / 640) * 100
-                    pw, ph = ((x2 - x1) / 640) * 100, ((y2 - y1) / 640) * 100
+                    # Convert to percentages relative to the true frame dimensions
+                    px, py = (x1 / frame_w) * 100, (y1 / frame_h) * 100
+                    pw, ph = ((x2 - x1) / frame_w) * 100, ((y2 - y1) / frame_h) * 100
                     
                     json_boxes.append({
                         "label": "Worker",
-                        "color": "#d4d4d8", # zinc-300
-                        "x": px, "y": py, "w": pw, "h": ph
+                        "color": CLASS_COLORS["Worker"],
+                        "x": px, "y": py, "w": pw, "h": ph, "conf": conf
                     })
 
             # --- Process PPE Results ---
-            if ppe_results[i]:
-                for box in ppe_results[i].boxes:
-                    conf = float(box.conf[0])
-                    if conf < 0.25: continue # Lower threshold to detect multiple PPE kits
-                    
-                    cls_id = int(box.cls[0])
-                    class_name = ppe_results[i].names[cls_id]
-                    
-                    # Prevent duplicate person boxes since the Person Tracker already drew 'Worker'
-                    if "person" in class_name.lower():
-                        continue
-                    
-                    x1, y1, x2, y2 = map(float, box.xyxy[0])
-                    px, py = (x1 / 640) * 100, (y1 / 640) * 100
-                    pw, ph = ((x2 - x1) / 640) * 100, ((y2 - y1) / 640) * 100
-                    
-                    is_violation = ("no-" in class_name.lower() or "without" in class_name.lower())
-                    color = "#ef4444" if is_violation else "#22c55e" # red / green
-                    
-                    if is_violation:
-                        alerts.append({
-                            "type": "PPE_VIOLATION",
-                            "class": class_name,
-                            "confidence": round(conf, 2)
+            if all_ppe_results[i]:
+                for p_idx, person_ppe_res in enumerate(all_ppe_results[i]):
+                    offset_x, offset_y = all_person_crops[i][p_idx]
+                    for box in person_ppe_res.boxes:
+                        conf = float(box.conf[0])
+                        if conf < 0.25: continue
+                        
+                        cls_id = int(box.cls[0])
+                        class_name = person_ppe_res.names[cls_id]
+                        
+                        if "person" in class_name.lower() or "worker" in class_name.lower():
+                            continue
+                        
+                        px1, py1, px2, py2 = map(float, box.xyxy[0])
+                        x1 = px1 + offset_x
+                        y1 = py1 + offset_y
+                        x2 = px2 + offset_x
+                        y2 = py2 + offset_y
+                        
+                        px, py = (x1 / frame_w) * 100, (y1 / frame_h) * 100
+                        pw, ph = ((x2 - x1) / frame_w) * 100, ((y2 - y1) / frame_h) * 100
+                        
+                        is_violation = ("no-" in class_name.lower() or "without" in class_name.lower())
+                        
+                        # Determine exact color based on class
+                        if is_violation:
+                            color = "#ef4444" # Red for violations
+                            alerts.append({
+                                "type": "PPE_VIOLATION",
+                                "class": class_name,
+                                "confidence": round(conf, 2)
+                            })
+                        else:
+                            # Use mapped color, or fallback to green
+                            color = CLASS_COLORS.get(class_name.lower(), "#22c55e")
+                            
+                        json_boxes.append({
+                            "label": f"{class_name} {conf:.2f}",
+                            "color": color,
+                            "x": px, "y": py, "w": pw, "h": ph, "conf": conf
                         })
-
-                    json_boxes.append({
-                        "label": f"{class_name} {conf:.2f}",
-                        "color": color,
-                        "x": px, "y": py, "w": pw, "h": ph
-                    })
 
             # --- Process Fire/Smoke Results ---
             if fire_results[i]:
@@ -162,22 +212,27 @@ def process_batch(batch):
                     cls_id = int(box.cls[0])
                     class_name = fire_results[i].names[cls_id]
                     
+                    # CRITICAL FIX: The fire model might have been trained on a dataset that included "person".
+                    # We MUST ignore anything that isn't explicitly fire, smoke, or flame!
+                    if class_name.lower() not in ["fire", "smoke", "flame"]:
+                        continue
+                        
                     x1, y1, x2, y2 = map(float, box.xyxy[0])
-                    px, py = (x1 / 640) * 100, (y1 / 640) * 100
-                    pw, ph = ((x2 - x1) / 640) * 100, ((y2 - y1) / 640) * 100
+                    px, py = (x1 / frame_w) * 100, (y1 / frame_h) * 100
+                    pw, ph = ((x2 - x1) / frame_w) * 100, ((y2 - y1) / frame_h) * 100
                     
-                    color = "#f97316" # orange
-                    if class_name.lower() in ["fire", "smoke", "flame"]:
-                        alerts.append({
-                            "type": "FIRE_HAZARD",
-                            "class": class_name,
-                            "confidence": round(conf, 2)
-                        })
+                    color = CLASS_COLORS.get(class_name.lower(), "#f97316") # Fallback to orange
+                    
+                    alerts.append({
+                        "type": "FIRE_HAZARD",
+                        "class": class_name,
+                        "confidence": round(conf, 2)
+                    })
                     
                     json_boxes.append({
                         "label": f"🔥 {class_name.upper()} {conf:.2f}",
                         "color": color,
-                        "x": px, "y": py, "w": pw, "h": ph
+                        "x": px, "y": py, "w": pw, "h": ph, "conf": conf
                     })
             
             # --- Trigger Alerts (Node.js) ---

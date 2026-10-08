@@ -13,7 +13,7 @@ export default function CameraSetup() {
     const [formData, setFormData] = useState({ name: '', zone: 'Zone 1 (Assembly)' });
     const videoRef = useRef<HTMLVideoElement>(null);
 
-    const { roomStatus, streams, isPublishing, togglePublish } = useZegoRoom(appID, serverURL, roomID, token);
+    const { roomStatus, errorMsg, debugLog, streams, isPublishing, togglePublish } = useZegoRoom(appID, serverURL, roomID, token);
 
     const [fps, setFps] = useState(30);
     const [now, setNow] = useState(new Date().toLocaleTimeString());
@@ -104,9 +104,17 @@ export default function CameraSetup() {
                     <div className="absolute inset-0 flex flex-col items-center justify-center text-zinc-600 px-6 text-center">
                         <div className="absolute inset-0 opacity-10 bg-[linear-gradient(rgba(255,255,255,0.05)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.05)_1px,transparent_1px)] bg-[size:24px_24px]" />
                         <LuVideoOff className="text-6xl mb-4 opacity-40 z-10" />
-                        <p className="z-10 text-sm uppercase tracking-widest font-mono opacity-60 mb-6">
+                        <p className="z-10 text-sm uppercase tracking-widest font-mono opacity-60 mb-2">
                             {roomStatus === 'CONNECTING' ? 'Connecting to Server…' : 'Camera Offline'}
                         </p>
+                        <p className="z-10 text-xs text-zinc-400 font-mono mb-6 bg-black/50 px-2 py-1 rounded">
+                            DEBUG: {debugLog}
+                        </p>
+                        {errorMsg && (
+                            <div className="z-10 bg-red-500/20 border border-red-500/50 text-red-200 text-xs p-3 rounded mb-6 max-w-xs break-words">
+                                ERROR: {errorMsg}
+                            </div>
+                        )}
                         {roomStatus === 'CONNECTED' && (
                             <button onClick={handleStartRestored} className="z-10 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-3 px-8 rounded-lg shadow-lg">
                                 Start Camera

@@ -16,7 +16,7 @@ export default function CameraGrid({ streams, streamStates }: CameraGridProps) {
 
     useEffect(() => {
         // Connect to the Node.js SSE endpoint
-        const eventSource = new EventSource("http://localhost:4000/api/alerts/stream");
+        const eventSource = new EventSource("/api/alerts/stream");
 
         eventSource.onmessage = (event) => {
             try {

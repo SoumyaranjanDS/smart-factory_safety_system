@@ -17,6 +17,8 @@ export function useZegoRoom(
   const [roomStatus, setRoomStatus] = useState<
     "DISCONNECTED" | "CONNECTING" | "CONNECTED"
   >("DISCONNECTED");
+  const [errorMsg, setErrorMsg] = useState<string>("");
+  const [debugLog, setDebugLog] = useState<string>("init");
   const localStreamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
@@ -98,21 +100,42 @@ export function useZegoRoom(
 
     const connect = async () => {
       setRoomStatus("CONNECTING");
+      setDebugLog("connect() called");
       try {
-        const response = await fetch(`/api/zego-token?userId=${userID}&roomId=${roomID}&t=${Date.now()}`);
-        if (!response.ok) throw new Error("Failed to fetch dynamic token");
+        let activeToken = token; 
         
-        const data = await response.json();
-        const dynamicToken = data.token;
+        try {
+          setDebugLog("fetching dynamic token...");
+          const response = await fetch(`/api/zego-token?userId=${userID}&roomId=${roomID}&t=${Date.now()}`);
+          if (response.ok) {
+            const data = await response.json();
+            if (data.token) activeToken = data.token;
+            setDebugLog("dynamic token fetched");
+          } else {
+            console.warn("Backend dynamic token failed (missing secret?), using static token.");
+            setDebugLog(`fetch failed: ${response.status}`);
+          }
+        } catch (err: any) {
+          console.warn("API unreachable, using static token.", err);
+          setDebugLog(`fetch error: ${err.message}`);
+        }
 
-        await zegoService.loginRoom(roomID, dynamicToken, {
+        setDebugLog("calling loginRoom...");
+        await zegoService.loginRoom(roomID, activeToken, {
           userID,
           userName: userID,
         });
-        if (isMounted) setRoomStatus("CONNECTED");
-      } catch (err) {
+        setDebugLog("loginRoom success");
+        if (isMounted) {
+            setRoomStatus("CONNECTED");
+            setErrorMsg("");
+        }
+      } catch (err: any) {
         console.error("Zego login failed", err);
-        if (isMounted) setRoomStatus("DISCONNECTED");
+        if (isMounted) {
+            setRoomStatus("DISCONNECTED");
+            setErrorMsg(err?.message || JSON.stringify(err) || "Unknown login error");
+        }
       }
     };
 
@@ -181,6 +204,8 @@ export function useZegoRoom(
 
   return {
     roomStatus,
+    errorMsg,
+    debugLog,
     streams,
     streamStates,
     isPublishing,
