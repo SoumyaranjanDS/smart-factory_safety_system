@@ -1,44 +1,18 @@
 import React, { useEffect, useState } from "react";
 import CameraCard from "./CameraCard";
+import EntryCameraCard from "./EntryCameraCard";
 import type { StreamStatus } from "../../hooks/useZegoRoom";
 import { LuVideoOff } from "react-icons/lu";
 
 interface CameraGridProps {
     streams: Record<string, MediaStream>;
     streamStates: Record<string, StreamStatus>;
+    alertingCameras: Record<string, { critical: boolean, warning: boolean }>;
+    onIncident?: (snapshot: { frame: string, alerts: any[], cameraId: string, timestamp: Date }) => void;
 }
 
-export default function CameraGrid({ streams, streamStates }: CameraGridProps) {
+export default function CameraGrid({ streams, streamStates, alertingCameras, onIncident }: CameraGridProps) {
     const activeStreams = Object.entries(streams);
-    
-    // Track which cameras currently have an active alert
-    const [alertingCameras, setAlertingCameras] = useState<Record<string, boolean>>({});
-
-    useEffect(() => {
-        // Connect to the Node.js SSE endpoint
-        const eventSource = new EventSource("/api/alerts/stream");
-
-        eventSource.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
-                if (data.cameraId && data.alerts && data.alerts.length > 0) {
-                    // Activate alert for this camera
-                    setAlertingCameras(prev => ({ ...prev, [data.cameraId]: true }));
-                    
-                    // Clear the alert automatically after 3 seconds if no new alerts arrive
-                    setTimeout(() => {
-                        setAlertingCameras(prev => ({ ...prev, [data.cameraId]: false }));
-                    }, 3000);
-                }
-            } catch (err) {
-                console.error("Failed to parse SSE alert:", err);
-            }
-        };
-
-        return () => {
-            eventSource.close();
-        };
-    }, []);
 
     if (activeStreams.length === 0) {
         return (
@@ -50,34 +24,56 @@ export default function CameraGrid({ streams, streamStates }: CameraGridProps) {
         );
     }
 
-    // Dynamic grid sizing based on camera count
-    const gridClass = activeStreams.length === 1 
+    // Separate entry cameras from regular factory cameras
+    const entryStreams = activeStreams.filter(([id]) => id.includes('_ENTRY'));
+    const regularStreams = activeStreams.filter(([id]) => !id.includes('_ENTRY'));
+
+    const gridClass = regularStreams.length === 1 
         ? "grid-cols-1 max-w-5xl mx-auto w-full" 
-        : activeStreams.length === 2 
+        : regularStreams.length === 2 
         ? "grid-cols-1 lg:grid-cols-2" 
         : "grid-cols-1 md:grid-cols-2 lg:grid-cols-3";
 
     return (
-        <div className={`grid ${gridClass} gap-6 p-6 flex-1 overflow-y-auto min-h-0 content-start`}>
-            {activeStreams.map(([streamId, stream]) => {
-                // streamId is like "Warehouse_Cam_452"
-                const parts = streamId.split('_');
-                // Remove the last part (the random number) if there's more than one part
-                const nameParts = parts.length > 1 ? parts.slice(0, -1) : parts;
-                const cleanName = nameParts.join(' ');
-                
-                return (
-                    <CameraCard 
-                        key={streamId}
-                        title={cleanName}
-                        cameraId={streamId}
-                        location="Remote Factory Zone"
-                        status={streamStates[streamId] || 'ONLINE'}
-                        stream={stream}
-                        isAlertActive={!!alertingCameras[streamId]}
-                    />
-                );
-            })}
+        <div className={`p-6 flex-1 overflow-y-auto min-h-0 flex flex-col gap-6`}>
+            
+            {/* Featured Entry Cameras (FaceID Style Scanner) */}
+            {entryStreams.length > 0 && (
+                <div className="w-full">
+                    {entryStreams.map(([streamId, stream]) => (
+                        <EntryCameraCard 
+                            key={streamId} 
+                            streamId={streamId} 
+                            stream={stream} 
+                        />
+                    ))}
+                </div>
+            )}
+
+            {/* Regular Live Feed Grid */}
+            {regularStreams.length > 0 && (
+                <div className={`grid ${gridClass} gap-6 content-start`}>
+                    {regularStreams.map(([streamId, stream]) => {
+                        // streamId is like "Warehouse_Cam_452"
+                        const parts = streamId.split('_');
+                        const nameParts = parts.length > 1 ? parts.slice(0, -1) : parts;
+                        const cleanName = nameParts.join(' ');
+                        
+                        return (
+                            <CameraCard 
+                                key={streamId}
+                                title={cleanName}
+                                cameraId={streamId}
+                                location="Factory Zone"
+                                status={streamStates[streamId] || 'ONLINE'}
+                                stream={stream}
+                                isAlertActive={alertingCameras[streamId]?.critical || alertingCameras[streamId]?.warning || false}
+                                onIncident={onIncident}
+                            />
+                        );
+                    })}
+                </div>
+            )}
         </div>
     );
 }

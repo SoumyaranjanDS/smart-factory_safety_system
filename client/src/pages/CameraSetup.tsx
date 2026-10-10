@@ -9,8 +9,8 @@ const token = import.meta.env.VITE_ZEGO_TEST_TOKEN || '';
 
 export default function CameraSetup() {
     const [isRegistered, setIsRegistered] = useState(false);
-    const [cameraData, setCameraData] = useState<{ id: string; name: string; zone: string } | null>(null);
-    const [formData, setFormData] = useState({ name: '', zone: 'Zone 1 (Assembly)' });
+    const [cameraData, setCameraData] = useState<{ id: string; name: string; zone: string; type: 'ENTRY' | 'LIVE' } | null>(null);
+    const [formData, setFormData] = useState({ name: '', zone: 'Zone 1 (Assembly)', isEntry: false });
     const videoRef = useRef<HTMLVideoElement>(null);
 
     const { roomStatus, errorMsg, debugLog, streams, isPublishing, togglePublish } = useZegoRoom(appID, serverURL, roomID, token);
@@ -23,8 +23,9 @@ export default function CameraSetup() {
         const id = localStorage.getItem('camera_id');
         const name = localStorage.getItem('camera_name');
         const zone = localStorage.getItem('camera_zone');
+        const type = localStorage.getItem('camera_type') as 'ENTRY' | 'LIVE' || 'LIVE';
         if (id && name && zone) {
-            setCameraData({ id, name, zone });
+            setCameraData({ id, name, zone, type });
             setIsRegistered(true);
         }
     }, []);
@@ -59,12 +60,15 @@ export default function CameraSetup() {
         }
 
         const safeName = formData.name.trim().replace(/[^a-zA-Z0-9]/g, '_');
-        const newId = `${safeName || 'Camera'}_${Math.floor(Math.random() * 10000)}`;
+        const baseId = `${safeName || 'Camera'}_${Math.floor(Math.random() * 10000)}`;
+        const newId = formData.isEntry ? `${baseId}_ENTRY` : baseId;
+        
         localStorage.setItem('camera_id', newId);
         localStorage.setItem('camera_name', formData.name);
         localStorage.setItem('camera_zone', formData.zone);
+        localStorage.setItem('camera_type', formData.isEntry ? 'ENTRY' : 'LIVE');
         
-        setCameraData({ id: newId, name: formData.name, zone: formData.zone });
+        setCameraData({ id: newId, name: formData.name, zone: formData.zone, type: formData.isEntry ? 'ENTRY' : 'LIVE' });
         setIsRegistered(true);
         
         // Critical: call togglePublish DIRECTLY inside the click handler!
@@ -131,7 +135,9 @@ export default function CameraSetup() {
                                 {isPublishing && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75" />}
                                 <span className={`relative inline-flex rounded-full h-3 w-3 ${isPublishing ? 'bg-red-500' : 'bg-zinc-600'}`} />
                             </span>
-                            <h1 className="text-white font-bold text-base leading-none drop-shadow-md">{cameraData.name}</h1>
+                            <h1 className="text-white font-bold text-base leading-none drop-shadow-md">
+                                {cameraData.name} {cameraData.type === 'ENTRY' && <span className="text-xs bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded ml-2">ENTRY Check</span>}
+                            </h1>
                         </div>
                         <p className="text-zinc-300 font-mono text-xs bg-black/40 px-2 py-0.5 rounded self-start">
                             {cameraData.id} · {cameraData.zone}
@@ -198,6 +204,18 @@ export default function CameraSetup() {
                             <option>Zone 3 (Loading Dock)</option>
                             <option>Zone 4 (Hazardous)</option>
                         </select>
+                    </div>
+                    <div className="flex items-center gap-2 mt-2">
+                        <input 
+                            type="checkbox" 
+                            id="isEntry" 
+                            checked={formData.isEntry}
+                            onChange={(e) => setFormData({ ...formData, isEntry: e.target.checked })}
+                            className="w-4 h-4 rounded border-zinc-800 bg-zinc-950 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-zinc-900"
+                        />
+                        <label htmlFor="isEntry" className="text-sm font-medium text-zinc-300">
+                            Set as Entry Check Camera (PPE Scan)
+                        </label>
                     </div>
                     <button type="submit"
                         className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-3 rounded-lg transition-colors mt-4 flex justify-center items-center gap-2">

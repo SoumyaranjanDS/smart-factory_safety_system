@@ -10,7 +10,8 @@ const app = express();
 const PORT = 4000;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 import { generateToken04 } from "./src/utils/zegoToken.js";
 
@@ -60,8 +61,8 @@ app.get("/api/alerts/stream", (req, res) => {
 });
 
 // Python AI Engine will hit this when it detects a violation
-app.post("/api/alerts", (req, res) => {
-    const { cameraId, alerts } = req.body;
+app.post("/api/alerts", async (req, res) => {
+    const { cameraId, alerts, frame } = req.body;
     
     if (!alerts || alerts.length === 0) {
         return res.json({ success: true, message: "No alerts" });
@@ -75,23 +76,57 @@ app.post("/api/alerts", (req, res) => {
         client.write(`data: ${alertData}\n\n`);
     }
     
-    // We can add database saving here later!
+    // Save to PostgreSQL Database
+    try {
+        await pool.query(
+            "INSERT INTO incidents (camera_id, alerts, frame_data) VALUES ($1, $2, $3)",
+            [cameraId, JSON.stringify(alerts), frame || null]
+        );
+    } catch (err) {
+        console.error("Failed to save incident to DB:", err);
+    }
     
     res.json({ success: true });
 });
 
-async function connectDB() {
-  try{
-    await pool.query("SELECT 1");
-    console.log("Database connected successfully");
-    app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-  
+// Fetch historical incidents for the Alerts page
+app.get("/api/incidents", async (req, res) => {
+    try {
+        const result = await pool.query(
+            "SELECT id, camera_id, alerts, frame_data, created_at FROM incidents ORDER BY created_at DESC LIMIT 50"
+        );
+        res.json(result.rows);
+    } catch (err) {
+        console.error("Failed to fetch incidents:", err);
+        res.status(500).json({ error: "Database error" });
+    }
 });
-  }catch(error){
-    console.log("Database connection failed", error);
-    process.exit(1);
-  }
+
+app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+});
+
+async function connectDB(retries = 10, delay = 3000) {
+    while (retries > 0) {
+        try {
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS incidents (
+                    id SERIAL PRIMARY KEY,
+                    camera_id VARCHAR(255) NOT NULL,
+                    alerts JSONB NOT NULL,
+                    frame_data TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            `);
+            console.log("Database connected and incidents table verified");
+            return;
+        } catch (error: any) {
+            console.log(`Database connection failed. Neon DB might be waking up... Retrying in ${delay/1000}s... (${retries - 1} attempts left)`);
+            retries -= 1;
+            await new Promise(res => setTimeout(res, delay));
+        }
+    }
+    console.error("Failed to connect to the database after multiple attempts.");
 }
 connectDB();
 
