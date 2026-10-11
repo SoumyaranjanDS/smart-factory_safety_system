@@ -12,6 +12,11 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:4000',
         changeOrigin: true
+      },
+      '/ws/stream': {
+        target: 'ws://localhost:8000',
+        ws: true,
+        changeOrigin: true
       }
     }
   }

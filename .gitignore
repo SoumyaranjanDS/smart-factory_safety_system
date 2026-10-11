@@ -53,3 +53,11 @@ logs/
 
 # Redis dump
 dump.rdb
+
+models/
+glove_model*/
+jury_assets/
+*.pt
+*.mp3
+*.ndjson
+ws_output.txt
